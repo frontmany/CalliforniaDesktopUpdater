@@ -325,8 +325,21 @@ int runApply(const Args& args) {
         ops = fullInstallOps(*newManifest);
     }
     if (ops.empty()) {
-        log::info("nothing to do (already at {})", newManifest->version);
-        writeLastApply(stateDir, "ok", newManifest->version, "already up to date");
+        // No file changes, but the manifest itself may differ (e.g. a release
+        // that only raises min_supported_version) — commit it so the client
+        // stops seeing the update as pending.
+        log::info("no file ops; committing manifest {} only", newManifest->version);
+        const auto temp = args.installDir / L"manifest.json.tmp";
+        std::ofstream manifestOut{temp, std::ios::binary | std::ios::trunc};
+        manifestOut.write(manifestBytes->data(),
+                          static_cast<std::streamsize>(manifestBytes->size()));
+        manifestOut.close();
+        if (manifestOut.good()) {
+            (void)fsops::retryDeleteFile(args.installDir / L"manifest.json");
+            (void)fsops::retryRename(temp, args.installDir / L"manifest.json");
+        }
+        fsops::removeTreeQuiet(args.stagingDir);
+        writeLastApply(stateDir, "ok", newManifest->version, "manifest only");
         if (!args.noRelaunch) {
             relaunch(args.installDir, args.relaunchExe);
         }
