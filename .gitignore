@@ -1,0 +1,25 @@
+# CMake / MSBuild
+build/
+out/
+cmake-build-*/
+CMakeUserPresets.json
+
+# Visual Studio
+.vs/
+*.user
+
+# MSVC
+*.obj
+*.pdb
+*.ilk
+*.idb
+
+# clangd / IDE
+.cache/
+.idea/
+compile_commands.json
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
