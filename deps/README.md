@@ -3,11 +3,13 @@
 Клонируйте зависимости в эту папку **локально** после clone (как `Client/deps`,
 `Auth/deps`). В git лежат только `.gitkeep` и этот README.
 
-Обе — header/source-only, достаточно клонировать, сборка не нужна:
+Обе — header/source-only, достаточно клонировать, сборка не нужна. Версии
+**запинены** (совпадают с CI-workflow в CallsKit):
 
 ```bash
-git clone --depth 1 https://github.com/orlp/ed25519.git deps/ed25519
-git clone --depth 1 https://github.com/nlohmann/json.git deps/json
+git clone https://github.com/orlp/ed25519.git deps/ed25519
+git -C deps/ed25519 checkout b1f19fab4aeb   # тегов нет, пин на коммит master
+git clone --depth 1 --branch v3.11.3 https://github.com/nlohmann/json.git deps/json
 ```
 
 ## Структура
