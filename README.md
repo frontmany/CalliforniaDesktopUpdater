@@ -63,5 +63,6 @@ powershell -File scripts\integration-test.ps1
   `%LOCALAPPDATA%\Calls\updates\staging\<version>\` и запускает апдейтер.
 - **CallsBackend/Updates** — сервис, отдающий манифесты; блобы файлов клиент
   качает с `/v1/updates/files/<sha256>` (MinIO через Nginx).
-- **CallsApp/scripts/publish-release.ps1** — публикация релиза (подпись
+- **CallsApp/ci/release/publish-release.mjs** — публикация релиза (подпись
   манифеста, залив блобов); `updater.exe` входит в состав каждого релиза.
+  Полный процесс выкатки — [CallsApp/RELEASING.md](https://github.com/frontmany/CallsApp/blob/main/RELEASING.md).
