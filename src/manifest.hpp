@@ -20,7 +20,7 @@ struct ManifestFile {
 ///  - paths: relative, forward slashes, no ".."/"."/empty segments, no drive
 ///    letters or backslashes, never inside ".update/";
 ///  - sha256 64 lowercase hex; size >= 0; no case-insensitive duplicate paths;
-///  - win-* platforms must ship Client.exe and updater.exe.
+///  - win-* platforms must ship Calls.exe and updater.exe.
 struct Manifest {
     int schema{1};
     std::string keyId;

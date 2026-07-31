@@ -170,7 +170,7 @@ std::expected<Manifest, std::string> Manifest::parse(const std::string& bytes) {
     }
 
     if (manifest.platform.starts_with("win")) {
-        for (const char* required : {"Client.exe", "updater.exe"}) {
+        for (const char* required : {"Calls.exe", "updater.exe"}) {
             if (!seenPaths.contains(lowered(required))) {
                 return std::unexpected(std::string(required) + " is required in the manifest");
             }

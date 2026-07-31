@@ -64,26 +64,26 @@ $($entries -join ",`n")
 "@ -replace "`r`n", "`n"
 }
 
-# --- Old install: Client.exe + updater.exe + keep.dll + old.dll -------------
-# Client.exe must be a real (non-running) binary so the lock probe works.
-Copy-Item $UpdaterExe (Join-Path $install "Client.exe")
+# --- Old install: Calls.exe + updater.exe + keep.dll + old.dll -------------
+# Calls.exe must be a real (non-running) binary so the lock probe works.
+Copy-Item $UpdaterExe (Join-Path $install "Calls.exe")
 Copy-Item $UpdaterExe (Join-Path $install "updater.exe")
 Write-Bytes (Join-Path $install "keep.dll") "keep-v1"
 Write-Bytes (Join-Path $install "old.dll") "old"
 Write-Bytes (Join-Path $install "sub\changed.dll") "changed-v1"
-$oldManifest = New-Manifest "0.1.0" $install @("Client.exe", "updater.exe", "keep.dll", "old.dll", "sub\changed.dll")
+$oldManifest = New-Manifest "0.1.0" $install @("Calls.exe", "updater.exe", "keep.dll", "old.dll", "sub\changed.dll")
 Write-Bytes (Join-Path $install "manifest.json") $oldManifest
 
 # --- Staged update: changed.dll replaced, new.dll added, old.dll removed ----
 Write-Bytes (Join-Path $staging "sub\changed.dll") "changed-v2"
 Write-Bytes (Join-Path $staging "new.dll") "new"
-Copy-Item (Join-Path $install "Client.exe") (Join-Path $staging "Client.exe")
+Copy-Item (Join-Path $install "Calls.exe") (Join-Path $staging "Calls.exe")
 Copy-Item (Join-Path $install "updater.exe") (Join-Path $staging "updater.exe")
 # keep.dll intentionally NOT staged (unchanged -> not in diff ops).
-$newManifestFiles = @("Client.exe", "updater.exe", "keep.dll", "new.dll", "sub\changed.dll")
+$newManifestFiles = @("Calls.exe", "updater.exe", "keep.dll", "new.dll", "sub\changed.dll")
 # keep.dll hash must come from the install (not staged); build entries manually:
 $entries = @(
-    @{ p = "Client.exe";      f = Join-Path $staging "Client.exe" },
+    @{ p = "Calls.exe";      f = Join-Path $staging "Calls.exe" },
     @{ p = "updater.exe";     f = Join-Path $staging "updater.exe" },
     @{ p = "keep.dll";        f = Join-Path $install "keep.dll" },
     @{ p = "new.dll";         f = Join-Path $staging "new.dll" },
@@ -122,7 +122,7 @@ if ($LASTEXITCODE -ne 0) { throw "signing failed" }
 $parent = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "ping -n 2 127.0.0.1 >nul" -PassThru -WindowStyle Hidden
 $run = Start-Process -FilePath $UpdaterExe -ArgumentList @(
     "apply", "--install-dir", "`"$install`"", "--staging-dir", "`"$staging`"",
-    "--parent-pid", $parent.Id, "--relaunch-exe", "Client.exe", "--no-relaunch",
+    "--parent-pid", $parent.Id, "--relaunch-exe", "Calls.exe", "--no-relaunch",
     "--log", "`"$(Join-Path $work 'updater.log')`"") -Wait -PassThru
 $exit = $run.ExitCode
 
@@ -148,11 +148,11 @@ Assert ($installedManifest -eq $newManifest) "manifest.json committed"
 New-Item -ItemType Directory -Force $staging | Out-Null
 Write-Bytes (Join-Path $staging "manifest.json") $newManifest
 Write-Bytes (Join-Path $staging "manifest.sig") ([Convert]::ToBase64String([byte[]](1..64)))
-Copy-Item (Join-Path $install "Client.exe") (Join-Path $staging "Client.exe")
+Copy-Item (Join-Path $install "Calls.exe") (Join-Path $staging "Calls.exe")
 $parent = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "exit" -PassThru -WindowStyle Hidden
 $run = Start-Process -FilePath $UpdaterExe -ArgumentList @(
     "apply", "--install-dir", "`"$install`"", "--staging-dir", "`"$staging`"",
-    "--parent-pid", $parent.Id, "--relaunch-exe", "Client.exe", "--no-relaunch",
+    "--parent-pid", $parent.Id, "--relaunch-exe", "Calls.exe", "--no-relaunch",
     "--log", "`"$(Join-Path $work 'updater.log')`"") -Wait -PassThru
 Assert ($run.ExitCode -eq 4) "bad signature rejected (exit 4)"
 

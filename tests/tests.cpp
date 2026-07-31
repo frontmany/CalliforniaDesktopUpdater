@@ -49,7 +49,7 @@ const std::string kZeroHash(64, '0');
 
 std::string requiredExes(const std::string& shaClient = kZeroHash,
                          const std::string& shaUpdater = kZeroHash) {
-    return fileEntry("Client.exe", shaClient, 1) + "," + fileEntry("updater.exe", shaUpdater, 1);
+    return fileEntry("Calls.exe", shaClient, 1) + "," + fileEntry("updater.exe", shaUpdater, 1);
 }
 
 void writeFile(const fs::path& path, const std::string& content) {
@@ -100,7 +100,7 @@ void testManifestParsing() {
     // Bad hash / missing required exes.
     CHECK(!updater::Manifest::parse(
                manifestJson("1.2.3", requiredExes(std::string(64, 'G')))).has_value());
-    CHECK(!updater::Manifest::parse(manifestJson("1.2.3", fileEntry("Client.exe", kZeroHash, 1)))
+    CHECK(!updater::Manifest::parse(manifestJson("1.2.3", fileEntry("Calls.exe", kZeroHash, 1)))
                .has_value());
 }
 
@@ -155,7 +155,7 @@ void testJournalRoundTrip() {
     updater::Journal journal{
         .state = "swapping",
         .version = "1.2.3",
-        .relaunchExe = "Client.exe",
+        .relaunchExe = "Calls.exe",
         .ops = {{updater::FileOp::Kind::Replace, "a.dll", std::string(64, 'a')},
                 {updater::FileOp::Kind::Remove, "b.dll", ""}},
     };
@@ -179,20 +179,20 @@ void testJournalRoundTrip() {
 
 void testRepairRollForward() {
     const auto install = freshDir("repair-install");
-    writeFile(install / "Client.exe", "old-exe");
+    writeFile(install / "Calls.exe", "old-exe");
     writeFile(install / "stay.dll", "stay");
     writeFile(install / "old.dll", "old");
 
     // Simulate a crash mid-swap: incoming holds the new files, journal says swapping.
-    writeFile(install / ".update" / "incoming" / "Client.exe", "new-exe");
+    writeFile(install / ".update" / "incoming" / "Calls.exe", "new-exe");
     writeFile(install / ".update" / "incoming" / "fresh.dll", "fresh");
     writeFile(install / ".update" / "manifest.json", "{\"new\":\"manifest\"}");
 
     updater::Journal journal{
         .state = "swapping",
         .version = "2.0.0",
-        .relaunchExe = "Client.exe",
-        .ops = {{updater::FileOp::Kind::Replace, "Client.exe", ""},
+        .relaunchExe = "Calls.exe",
+        .ops = {{updater::FileOp::Kind::Replace, "Calls.exe", ""},
                 {updater::FileOp::Kind::Add, "fresh.dll", ""},
                 {updater::FileOp::Kind::Remove, "old.dll", ""}},
     };
@@ -204,7 +204,7 @@ void testRepairRollForward() {
     args.noRelaunch = true;
     CHECK(updater::runRepair(args) == updater::kOk);
 
-    CHECK(readFile(install / "Client.exe") == "new-exe");
+    CHECK(readFile(install / "Calls.exe") == "new-exe");
     CHECK(readFile(install / "fresh.dll") == "fresh");
     CHECK(readFile(install / "stay.dll") == "stay");
     CHECK(!fs::exists(install / "old.dll"));
@@ -215,8 +215,8 @@ void testRepairRollForward() {
 void testRepairHalfSwapped() {
     // Crash after some ops already ran: replace done, add not, remove not.
     const auto install = freshDir("repair-half");
-    writeFile(install / "Client.exe", "new-exe");  // already swapped
-    writeFile(install / ".update" / "backup" / "Client.exe", "old-exe");
+    writeFile(install / "Calls.exe", "new-exe");  // already swapped
+    writeFile(install / ".update" / "backup" / "Calls.exe", "old-exe");
     writeFile(install / ".update" / "incoming" / "fresh.dll", "fresh");
     writeFile(install / "old.dll", "old");
     writeFile(install / ".update" / "manifest.json", "m2");
@@ -224,8 +224,8 @@ void testRepairHalfSwapped() {
     updater::Journal journal{
         .state = "swapping",
         .version = "2.0.0",
-        .relaunchExe = "Client.exe",
-        .ops = {{updater::FileOp::Kind::Replace, "Client.exe", ""},
+        .relaunchExe = "Calls.exe",
+        .ops = {{updater::FileOp::Kind::Replace, "Calls.exe", ""},
                 {updater::FileOp::Kind::Add, "fresh.dll", ""},
                 {updater::FileOp::Kind::Remove, "old.dll", ""}},
     };
@@ -237,7 +237,7 @@ void testRepairHalfSwapped() {
     args.noRelaunch = true;
     CHECK(updater::runRepair(args) == updater::kOk);
 
-    CHECK(readFile(install / "Client.exe") == "new-exe");
+    CHECK(readFile(install / "Calls.exe") == "new-exe");
     CHECK(readFile(install / "fresh.dll") == "fresh");
     CHECK(!fs::exists(install / "old.dll"));
     CHECK(!fs::exists(install / ".update"));
@@ -245,12 +245,12 @@ void testRepairHalfSwapped() {
 
 void testRepairStagedDiscards() {
     const auto install = freshDir("repair-staged");
-    writeFile(install / "Client.exe", "exe");
+    writeFile(install / "Calls.exe", "exe");
     writeFile(install / ".update" / "incoming" / "x.dll", "x");
     updater::Journal journal{
         .state = "staged",
         .version = "2.0.0",
-        .relaunchExe = "Client.exe",
+        .relaunchExe = "Calls.exe",
         .ops = {{updater::FileOp::Kind::Add, "x.dll", ""}},
     };
     CHECK(journal.save(install).has_value());
@@ -260,14 +260,14 @@ void testRepairStagedDiscards() {
     args.installDir = install;
     args.noRelaunch = true;
     CHECK(updater::runRepair(args) == updater::kOk);
-    CHECK(readFile(install / "Client.exe") == "exe");
+    CHECK(readFile(install / "Calls.exe") == "exe");
     CHECK(!fs::exists(install / ".update"));
     CHECK(!fs::exists(install / "x.dll"));
 }
 
 void testRepairNoJournal() {
     const auto install = freshDir("repair-nothing");
-    writeFile(install / "Client.exe", "exe");
+    writeFile(install / "Calls.exe", "exe");
     updater::Args args;
     args.mode = updater::Args::Mode::Repair;
     args.installDir = install;
@@ -279,7 +279,7 @@ void testArgs() {
     using updater::Args;
     const auto ok = Args::parse(
         {L"updater.exe", L"apply", L"--install-dir", L"C:\\x", L"--staging-dir", L"C:\\y",
-         L"--parent-pid", L"123", L"--relaunch-exe", L"Client.exe", L"--no-relaunch"});
+         L"--parent-pid", L"123", L"--relaunch-exe", L"Calls.exe", L"--no-relaunch"});
     CHECK(ok.has_value());
     if (ok) {
         CHECK(ok->mode == Args::Mode::Apply);

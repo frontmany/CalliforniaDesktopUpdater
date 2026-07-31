@@ -27,14 +27,14 @@
 
 ```
 updater.exe apply  --install-dir <dir> --staging-dir <dir> --parent-pid <pid>
-                   --relaunch-exe Client.exe [--no-relaunch] [--log <file>]
-updater.exe repair --install-dir <dir> [--relaunch-exe Client.exe] [--log <file>]
+                   --relaunch-exe Calls.exe [--no-relaunch] [--log <file>]
+updater.exe repair --install-dir <dir> [--relaunch-exe Calls.exe] [--log <file>]
 ```
 
 Клиент перед запуском копирует `updater.exe` из install-папки в
 `%LOCALAPPDATA%\Calls\updates\bin\` (нельзя запускать из папки, которую
 предстоит обновлять) и штатно завершается; апдейтер ждёт выхода по PID и
-эксклюзивной пробе `Client.exe`.
+эксклюзивной пробе `Calls.exe`.
 
 Exit-коды: `0` применено; `2` аргументы/уже работает другой апдейтер; `3`
 приложение не вышло; `4` подпись/хэш не сошлись; `5` нет прав записи; `6` swap
