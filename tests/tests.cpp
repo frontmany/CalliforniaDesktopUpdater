@@ -47,8 +47,8 @@ std::string fileEntry(const std::string& path, const std::string& sha, const lon
 
 const std::string kZeroHash(64, '0');
 
-std::string requiredExes(const std::string& shaClient = kZeroHash,
-                         const std::string& shaUpdater = kZeroHash) {
+std::string baseFiles(const std::string& shaClient = kZeroHash,
+                      const std::string& shaUpdater = kZeroHash) {
     return fileEntry("Calls.exe", shaClient, 1) + "," + fileEntry("updater.exe", shaUpdater, 1);
 }
 
@@ -73,7 +73,7 @@ fs::path freshDir(const std::string& name) {
 // --- Manifest validation ----------------------------------------------------
 
 void testManifestParsing() {
-    CHECK(updater::Manifest::parse(manifestJson("1.2.3", requiredExes())).has_value());
+    CHECK(updater::Manifest::parse(manifestJson("1.2.3", baseFiles())).has_value());
 
     // Path attacks and malformed entries must all be rejected.
     const std::string badPaths[] = {
@@ -82,36 +82,41 @@ void testManifestParsing() {
     };
     for (const auto& path : badPaths) {
         const auto parsed = updater::Manifest::parse(
-            manifestJson("1.2.3", requiredExes() + "," + fileEntry(path, kZeroHash, 1)));
+            manifestJson("1.2.3", baseFiles() + "," + fileEntry(path, kZeroHash, 1)));
         CHECK(!parsed.has_value());
     }
 
     // Case-insensitive duplicates collide on Windows.
     CHECK(!updater::Manifest::parse(
-               manifestJson("1.2.3", requiredExes() + "," + fileEntry("A.dll", kZeroHash, 1) + "," +
+               manifestJson("1.2.3", baseFiles() + "," + fileEntry("A.dll", kZeroHash, 1) + "," +
                                          fileEntry("a.dll", kZeroHash, 1)))
                .has_value());
 
     // Version formats.
     for (const auto* version : {"1.2", "1.2.3.4", "01.2.3", "a.b.c", "1.2.-3", ""}) {
-        CHECK(!updater::Manifest::parse(manifestJson(version, requiredExes())).has_value());
+        CHECK(!updater::Manifest::parse(manifestJson(version, baseFiles())).has_value());
     }
 
-    // Bad hash / missing required exes.
+    // Bad hash.
     CHECK(!updater::Manifest::parse(
-               manifestJson("1.2.3", requiredExes(std::string(64, 'G')))).has_value());
-    CHECK(!updater::Manifest::parse(manifestJson("1.2.3", fileEntry("Calls.exe", kZeroHash, 1)))
-               .has_value());
+               manifestJson("1.2.3", baseFiles(std::string(64, 'G')))).has_value());
+
+    // Regression guard for the Client.exe -> Calls.exe rename: parse must NEVER
+    // require a file by name -- that rule shipped inside released binaries and
+    // made every installed client reject every later manifest. Which exe has to
+    // be present is decided in runApply from args.relaunchExe.
+    CHECK(updater::Manifest::parse(manifestJson("1.2.3", fileEntry("anything.dll", kZeroHash, 1)))
+              .has_value());
 }
 
 void testDiff() {
     const auto hashA = std::string(64, 'a');
     const auto hashB = std::string(64, 'b');
     const auto oldManifest = updater::Manifest::parse(manifestJson(
-        "1.0.0", requiredExes() + "," + fileEntry("keep.dll", hashA, 1) + "," +
+        "1.0.0", baseFiles() + "," + fileEntry("keep.dll", hashA, 1) + "," +
                      fileEntry("changed.dll", hashA, 1) + "," + fileEntry("gone.dll", hashA, 1)));
     const auto newManifest = updater::Manifest::parse(manifestJson(
-        "1.1.0", requiredExes() + "," + fileEntry("keep.dll", hashA, 1) + "," +
+        "1.1.0", baseFiles() + "," + fileEntry("keep.dll", hashA, 1) + "," +
                      fileEntry("Changed.dll", hashB, 1) + "," + fileEntry("new.dll", hashB, 1)));
     CHECK(oldManifest.has_value() && newManifest.has_value());
 

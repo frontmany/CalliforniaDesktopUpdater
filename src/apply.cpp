@@ -9,10 +9,13 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -308,6 +311,27 @@ int runApply(const Args& args) {
     const auto newManifest = Manifest::parse(*manifestBytes);
     if (!newManifest) {
         return fail(kVerifyFailed, "manifest invalid: " + newManifest.error());
+    }
+
+    // The relaunch target must survive the update: a manifest that does not
+    // ship it would leave an install nobody can start again. Deliberately
+    // checked HERE against args.relaunchExe, not inside Manifest::parse --
+    // which exe matters is a property of this invocation, not of the manifest
+    // format. Parse used to hardcode the literal "Client.exe", and because
+    // that check lived in already-shipped binaries, renaming the exe made
+    // every installed client reject every future manifest with no way to fix
+    // it after the fact. Never put a file name back into parse.
+    // (That the manifest also ships updater.exe is enforced at publish time by
+    // the Updates service, which is server-side and can be changed by deploy.)
+    const auto sameFileName = [](std::string_view left, std::string_view right) {
+        return std::ranges::equal(left, right, [](unsigned char a, unsigned char b) {
+            return std::tolower(a) == std::tolower(b);
+        });
+    };
+    if (std::ranges::none_of(newManifest->files, [&](const ManifestFile& file) {
+            return sameFileName(file.path, args.relaunchExe);
+        })) {
+        return fail(kVerifyFailed, args.relaunchExe + " is missing from the manifest");
     }
 
     std::vector<FileOp> ops;

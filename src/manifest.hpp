@@ -19,8 +19,8 @@ struct ManifestFile {
 ///  - platform/channel: [a-z0-9][a-z0-9-]*;
 ///  - paths: relative, forward slashes, no ".."/"."/empty segments, no drive
 ///    letters or backslashes, never inside ".update/";
-///  - sha256 64 lowercase hex; size >= 0; no case-insensitive duplicate paths;
-///  - win-* platforms must ship Calls.exe and updater.exe.
+///  - sha256 64 lowercase hex; size >= 0; no case-insensitive duplicate paths.
+/// Deliberately NOT here: any rule naming a specific file. See manifest.cpp.
 struct Manifest {
     int schema{1};
     std::string keyId;

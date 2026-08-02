@@ -1,7 +1,9 @@
 cmake_minimum_required(VERSION 3.24)
 
+# Deliberately no VERSION: the updater is not versioned or released on its
+# own. It ships inside the client's release tree and is identified by the
+# client release's version (CallsApp/release.json) via the signed manifest.
 project(Updater
-    VERSION 0.1.0
     LANGUAGES C CXX
     DESCRIPTION "Calls client update applier"
 )
