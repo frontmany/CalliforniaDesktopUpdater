@@ -28,3 +28,6 @@ compile_commands.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# Agent workspace: local settings, worktrees and scratch state.
+/.claude/
