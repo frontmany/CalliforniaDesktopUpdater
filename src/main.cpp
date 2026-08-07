@@ -1,6 +1,8 @@
+#include "app_paths.hpp"
 #include "apply.hpp"
 #include "args.hpp"
 #include "log.hpp"
+#include "win_raii.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -11,16 +13,15 @@
 
 namespace {
 
-std::filesystem::path defaultLogFile() {
-    wchar_t* localAppData = nullptr;
-    std::filesystem::path base;
-    if (_wdupenv_s(&localAppData, nullptr, L"LOCALAPPDATA") == 0 && localAppData != nullptr) {
-        base = localAppData;
-        free(localAppData);
-    } else {
-        base = std::filesystem::temp_directory_path();
+/// Best-effort --log extraction for the parse-failure path, so a caller that
+/// directed logs to a file can still see why its invocation was rejected.
+std::filesystem::path requestedLogFile(const std::vector<std::wstring>& argv) {
+    for (std::size_t i = 0; i + 1 < argv.size(); ++i) {
+        if (argv[i] == L"--log") {
+            return argv[i + 1];
+        }
     }
-    return base / L"Calls" / L"logs" / L"updater.log";
+    return {};
 }
 
 }  // namespace
@@ -29,21 +30,25 @@ std::filesystem::path defaultLogFile() {
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     int argc = 0;
     LPWSTR* argvRaw = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (argvRaw == nullptr) {
+        return updater::kBadArgs;  // cannot even log: no args, no --log value
+    }
+    const updater::UniqueLocalMemory argvOwner{argvRaw};
     std::vector<std::wstring> argv;
     argv.reserve(static_cast<std::size_t>(argc));
     for (int i = 0; i < argc; ++i) {
         argv.emplace_back(argvRaw[i]);
     }
-    LocalFree(argvRaw);
 
     const auto args = updater::Args::parse(argv);
     if (!args) {
-        updater::log::init(defaultLogFile());
+        const auto logFile = requestedLogFile(argv);
+        updater::log::init(logFile.empty() ? updater::defaultLogFile() : logFile);
         updater::log::error("bad arguments: {}", args.error());
         return updater::kBadArgs;
     }
 
-    updater::log::init(args->logFile.empty() ? defaultLogFile() : args->logFile);
+    updater::log::init(args->logFile.empty() ? updater::defaultLogFile() : args->logFile);
 
     const int code = args->mode == updater::Args::Mode::Apply ? updater::runApply(*args)
                                                               : updater::runRepair(*args);

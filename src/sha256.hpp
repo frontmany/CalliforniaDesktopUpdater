@@ -11,4 +11,4 @@ namespace updater {
 [[nodiscard]] std::expected<std::string, std::string> sha256File(const std::filesystem::path& file);
 [[nodiscard]] std::expected<std::string, std::string> sha256Bytes(std::string_view bytes);
 
-}
+}  // namespace updater

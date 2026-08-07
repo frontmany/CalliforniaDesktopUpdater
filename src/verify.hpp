@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <string>
 #include <string_view>
 
@@ -9,8 +10,8 @@ namespace updater {
 /// the public key embedded at build time (src/public_key.hpp).
 [[nodiscard]] bool verifyManifestSignature(std::string_view message, std::string_view signature);
 
-/// Strict base64 decode (standard alphabet, required padding). Returns false
-/// on any malformed input.
-[[nodiscard]] bool base64Decode(std::string_view text, std::string& out);
+/// Strict base64 decode (standard alphabet, required padding). The error
+/// names what was malformed so signature failures are diagnosable.
+[[nodiscard]] std::expected<std::string, std::string> base64Decode(std::string_view text);
 
-}
+}  // namespace updater

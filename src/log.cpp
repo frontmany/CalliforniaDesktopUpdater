@@ -16,10 +16,17 @@ void init(const std::filesystem::path& file) {
     std::error_code ec;
     std::filesystem::create_directories(file.parent_path(), ec);
 #ifdef _WIN32
-    gFile = _wfopen(file.c_str(), L"ab");
+    std::FILE* opened = _wfopen(file.c_str(), L"ab");
 #else
-    gFile = std::fopen(file.c_str(), "ab");
+    std::FILE* opened = std::fopen(file.c_str(), "ab");
 #endif
+    // Same lock as write(): init races nothing today (called once from
+    // wWinMain), but a second init must not leak the first handle.
+    std::scoped_lock lock{gMutex};
+    if (gFile != nullptr) {
+        std::fclose(gFile);
+    }
+    gFile = opened;
 }
 
 void write(const std::string_view level, const std::string_view message) {
@@ -41,4 +48,4 @@ void flushAll() {
     }
 }
 
-}
+}  // namespace updater::log

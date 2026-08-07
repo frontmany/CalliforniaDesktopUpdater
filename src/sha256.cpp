@@ -1,11 +1,12 @@
 #include "sha256.hpp"
 
+#include "win_raii.hpp"
+
 #include <windows.h>
 #include <bcrypt.h>
 
 #include <array>
 #include <cstdio>
-#include <memory>
 #include <vector>
 
 namespace updater {
@@ -36,6 +37,10 @@ public:
             mHash = nullptr;
         }
     }
+
+    // Copying would double-destroy the CNG handles.
+    Hasher(const Hasher&) = delete;
+    Hasher& operator=(const Hasher&) = delete;
 
     ~Hasher() {
         if (mHash != nullptr) {
@@ -74,21 +79,18 @@ std::expected<std::string, std::string> sha256File(const std::filesystem::path& 
     if (!hasher.valid()) {
         return std::unexpected("CNG SHA-256 unavailable");
     }
-    std::FILE* handle = _wfopen(file.c_str(), L"rb");
-    if (handle == nullptr) {
+    const UniqueFile handle{_wfopen(file.c_str(), L"rb")};
+    if (!handle.valid()) {
         return std::unexpected("cannot open file: " + file.string());
     }
     std::vector<unsigned char> buffer(1 << 20);
     for (;;) {
-        const auto read = std::fread(buffer.data(), 1, buffer.size(), handle);
+        const auto read = std::fread(buffer.data(), 1, buffer.size(), handle.get());
         if (read > 0 && !hasher.update(buffer.data(), read)) {
-            std::fclose(handle);
             return std::unexpected("BCryptHashData failed");
         }
         if (read < buffer.size()) {
-            const bool failed = std::ferror(handle) != 0;
-            std::fclose(handle);
-            if (failed) {
+            if (std::ferror(handle.get()) != 0) {
                 return std::unexpected("read error: " + file.string());
             }
             break;
@@ -108,4 +110,4 @@ std::expected<std::string, std::string> sha256Bytes(const std::string_view bytes
     return hasher.finish();
 }
 
-}
+}  // namespace updater

@@ -17,4 +17,4 @@ inline constexpr std::array<std::uint8_t, 32> kUpdatePublicKey{
     0x35, 0x94, 0x5a, 0x74, 0x1f, 0x7d, 0x8b, 0x6e,
 };
 
-}
+}  // namespace updater

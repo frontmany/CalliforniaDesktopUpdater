@@ -41,6 +41,7 @@ target_include_directories(ed25519_verify PUBLIC deps/ed25519/src)
 
 # Everything except the entry point lives in a static lib so tests link it.
 add_library(applylib STATIC
+    src/app_paths.cpp
     src/apply.cpp
     src/args.cpp
     src/fsops.cpp

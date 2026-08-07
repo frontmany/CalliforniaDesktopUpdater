@@ -29,7 +29,9 @@ constexpr auto kReverse = buildReverse();
 }  // namespace
 
 bool verifyManifestSignature(const std::string_view message, const std::string_view signature) {
-    if (signature.size() != 64) {
+    if (signature.size() != 64 || message.empty()) {
+        // An empty message can never carry a valid manifest; rejecting it here
+        // also keeps a potentially-null data() out of the C verify routine.
         return false;
     }
     return ed25519_verify(reinterpret_cast<const unsigned char*>(signature.data()),
@@ -38,11 +40,11 @@ bool verifyManifestSignature(const std::string_view message, const std::string_v
                           kUpdatePublicKey.data()) == 1;
 }
 
-bool base64Decode(const std::string_view text, std::string& out) {
-    out.clear();
+std::expected<std::string, std::string> base64Decode(const std::string_view text) {
     if (text.size() % 4 != 0) {
-        return false;
+        return std::unexpected("base64 length is not a multiple of 4");
     }
+    std::string out;
     out.reserve(text.size() / 4 * 3);
     for (std::size_t index = 0; index < text.size(); index += 4) {
         int values[4];
@@ -51,17 +53,17 @@ bool base64Decode(const std::string_view text, std::string& out) {
             const char character = text[index + position];
             if (character == '=') {
                 if (index + 4 != text.size() || position < 2) {
-                    return false;
+                    return std::unexpected("base64 padding in an illegal position");
                 }
                 values[position] = 0;
                 ++padding;
             } else {
                 if (padding > 0) {
-                    return false;
+                    return std::unexpected("base64 data after padding");
                 }
                 const auto value = kReverse[static_cast<unsigned char>(character)];
                 if (value < 0) {
-                    return false;
+                    return std::unexpected("base64 contains an invalid character");
                 }
                 values[position] = value;
             }
@@ -74,7 +76,7 @@ bool base64Decode(const std::string_view text, std::string& out) {
             out.push_back(static_cast<char>(((values[2] & 0x03) << 6) | values[3]));
         }
     }
-    return true;
+    return out;
 }
 
-}
+}  // namespace updater

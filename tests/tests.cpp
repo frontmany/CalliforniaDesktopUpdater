@@ -53,9 +53,16 @@ std::string baseFiles(const std::string& shaClient = kZeroHash,
 }
 
 void writeFile(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
     std::ofstream out{path, std::ios::binary | std::ios::trunc};
     out.write(content.data(), static_cast<std::streamsize>(content.size()));
+    out.close();
+    if (!out.good()) {
+        // A broken fixture must fail loudly, not as a confusing later CHECK.
+        ++gFailures;
+        std::cout << "FAIL setup: cannot write " << path.string() << "\n";
+    }
 }
 
 std::string readFile(const fs::path& path) {
@@ -65,9 +72,25 @@ std::string readFile(const fs::path& path) {
 
 fs::path freshDir(const std::string& name) {
     const auto dir = fs::temp_directory_path() / "updater-tests" / name;
-    fs::remove_all(dir);
-    fs::create_directories(dir);
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    if (ec) {
+        ++gFailures;
+        std::cout << "FAIL setup: cannot create " << dir.string() << "\n";
+    }
     return dir;
+}
+
+// Every runRepair call writes last-apply.json; point it at a scratch dir so
+// tests never overwrite the real %LOCALAPPDATA%\Calls\updates state.
+updater::Args repairArgs(const fs::path& install, const std::string& name) {
+    updater::Args args;
+    args.mode = updater::Args::Mode::Repair;
+    args.installDir = install;
+    args.noRelaunch = true;
+    args.stateDir = freshDir(name + "-state");
+    return args;
 }
 
 // --- Manifest validation ----------------------------------------------------
@@ -138,12 +161,13 @@ void testDiff() {
 }
 
 void testBase64() {
-    std::string out;
-    CHECK(updater::base64Decode("aGVsbG8=", out) && out == "hello");
-    CHECK(updater::base64Decode("", out) && out.empty());
-    CHECK(!updater::base64Decode("a", out));
-    CHECK(!updater::base64Decode("ab=c", out));
-    CHECK(!updater::base64Decode("!!!!", out));
+    const auto hello = updater::base64Decode("aGVsbG8=");
+    CHECK(hello.has_value() && *hello == "hello");
+    const auto empty = updater::base64Decode("");
+    CHECK(empty.has_value() && empty->empty());
+    CHECK(!updater::base64Decode("a").has_value());
+    CHECK(!updater::base64Decode("ab=c").has_value());
+    CHECK(!updater::base64Decode("!!!!").has_value());
 }
 
 void testSha256() {
@@ -166,14 +190,23 @@ void testJournalRoundTrip() {
     };
     CHECK(journal.save(dir).has_value());
     const auto loaded = updater::Journal::load(dir);
-    CHECK(loaded.has_value());
-    if (loaded) {
-        CHECK(loaded->state == "swapping");
-        CHECK(loaded->version == "1.2.3");
-        CHECK(loaded->ops.size() == 2);
-        CHECK(loaded->ops[1].kind == updater::FileOp::Kind::Remove);
+    CHECK(loaded.has_value() && loaded->has_value());
+    if (loaded && *loaded) {
+        CHECK((*loaded)->state == "swapping");
+        CHECK((*loaded)->version == "1.2.3");
+        CHECK((*loaded)->ops.size() == 2);
+        CHECK((*loaded)->ops[1].kind == updater::FileOp::Kind::Remove);
     }
-    CHECK(!updater::Journal::load(freshDir("journal-none")).has_value());
+
+    // Absent journal: success carrying "nothing".
+    const auto none = updater::Journal::load(freshDir("journal-none"));
+    CHECK(none.has_value() && !none->has_value());
+
+    // Corrupt journal: an error, NOT "absent" — repair must not treat it as
+    // "nothing was mid-swap".
+    const auto corruptDir = freshDir("journal-corrupt");
+    writeFile(corruptDir / ".update" / "journal.json", "{not json");
+    CHECK(!updater::Journal::load(corruptDir).has_value());
 }
 
 // --- Apply state machine (no signature: exercised via repair paths) ---------
@@ -203,11 +236,7 @@ void testRepairRollForward() {
     };
     CHECK(journal.save(install).has_value());
 
-    updater::Args args;
-    args.mode = updater::Args::Mode::Repair;
-    args.installDir = install;
-    args.noRelaunch = true;
-    CHECK(updater::runRepair(args) == updater::kOk);
+    CHECK(updater::runRepair(repairArgs(install, "repair-install")) == updater::kOk);
 
     CHECK(readFile(install / "Calls.exe") == "new-exe");
     CHECK(readFile(install / "fresh.dll") == "fresh");
@@ -236,11 +265,7 @@ void testRepairHalfSwapped() {
     };
     CHECK(journal.save(install).has_value());
 
-    updater::Args args;
-    args.mode = updater::Args::Mode::Repair;
-    args.installDir = install;
-    args.noRelaunch = true;
-    CHECK(updater::runRepair(args) == updater::kOk);
+    CHECK(updater::runRepair(repairArgs(install, "repair-half")) == updater::kOk);
 
     CHECK(readFile(install / "Calls.exe") == "new-exe");
     CHECK(readFile(install / "fresh.dll") == "fresh");
@@ -260,11 +285,7 @@ void testRepairStagedDiscards() {
     };
     CHECK(journal.save(install).has_value());
 
-    updater::Args args;
-    args.mode = updater::Args::Mode::Repair;
-    args.installDir = install;
-    args.noRelaunch = true;
-    CHECK(updater::runRepair(args) == updater::kOk);
+    CHECK(updater::runRepair(repairArgs(install, "repair-staged")) == updater::kOk);
     CHECK(readFile(install / "Calls.exe") == "exe");
     CHECK(!fs::exists(install / ".update"));
     CHECK(!fs::exists(install / "x.dll"));
@@ -273,11 +294,32 @@ void testRepairStagedDiscards() {
 void testRepairNoJournal() {
     const auto install = freshDir("repair-nothing");
     writeFile(install / "Calls.exe", "exe");
-    updater::Args args;
-    args.mode = updater::Args::Mode::Repair;
-    args.installDir = install;
-    args.noRelaunch = true;
-    CHECK(updater::runRepair(args) == updater::kNothingToDo);
+    CHECK(updater::runRepair(repairArgs(install, "repair-nothing")) == updater::kNothingToDo);
+}
+
+void testRepairCorruptJournalPreservesBackups() {
+    // Power loss corrupted the journal mid-swap: backup/ still holds the only
+    // copy of the old exe. Repair must preserve .update, not "clean up".
+    const auto install = freshDir("repair-corrupt");
+    writeFile(install / ".update" / "journal.json", "{truncated");
+    writeFile(install / ".update" / "backup" / "Calls.exe", "old-exe");
+
+    CHECK(updater::runRepair(repairArgs(install, "repair-corrupt")) ==
+          updater::kSwapFailedBroken);
+    CHECK(fs::exists(install / ".update" / "backup" / "Calls.exe"));
+    CHECK(fs::exists(install / ".update" / "journal.json"));
+}
+
+void testRepairCorruptJournalNoValuablesCleansUp() {
+    // Corrupt journal but nothing staged or backed up: safe to clean.
+    const auto install = freshDir("repair-corrupt-empty");
+    writeFile(install / "Calls.exe", "exe");
+    writeFile(install / ".update" / "journal.json", "{truncated");
+
+    CHECK(updater::runRepair(repairArgs(install, "repair-corrupt-empty")) ==
+          updater::kNothingToDo);
+    CHECK(!fs::exists(install / ".update"));
+    CHECK(readFile(install / "Calls.exe") == "exe");
 }
 
 void testArgs() {
@@ -298,6 +340,14 @@ void testArgs() {
     CHECK(!Args::parse({L"updater.exe", L"apply", L"--install-dir", L"C:\\x", L"--staging-dir",
                         L"C:\\y", L"--parent-pid", L"123", L"--relaunch-exe", L"..\\evil.exe"})
                .has_value());
+    // Drive-relative names ("C:x.exe") would resolve outside the install dir;
+    // ".." always exists and defeats the rollback health check.
+    CHECK(!Args::parse({L"updater.exe", L"repair", L"--install-dir", L"C:\\x",
+                        L"--relaunch-exe", L"C:x.exe"})
+               .has_value());
+    CHECK(!Args::parse({L"updater.exe", L"repair", L"--install-dir", L"C:\\x",
+                        L"--relaunch-exe", L".."})
+               .has_value());
 }
 
 }  // namespace
@@ -312,6 +362,8 @@ int main() {
     testRepairHalfSwapped();
     testRepairStagedDiscards();
     testRepairNoJournal();
+    testRepairCorruptJournalPreservesBackups();
+    testRepairCorruptJournalNoValuablesCleansUp();
     testArgs();
 
     if (gFailures == 0) {

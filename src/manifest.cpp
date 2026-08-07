@@ -31,7 +31,7 @@ bool isSlug(const std::string& text) {
         return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9') ||
                character == '-';
     };
-    return isSlugChar(text.front()) && text.front() != '-' && std::ranges::all_of(text, isSlugChar);
+    return text.front() != '-' && std::ranges::all_of(text, isSlugChar);
 }
 
 bool isValidVersion(const std::string& text) {
@@ -212,4 +212,4 @@ std::vector<FileOp> fullInstallOps(const Manifest& newManifest) {
     return ops;
 }
 
-}
+}  // namespace updater

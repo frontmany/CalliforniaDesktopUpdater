@@ -1,10 +1,12 @@
 #include "journal.hpp"
 
+#include "fsops.hpp"
+
 #include <nlohmann/json.hpp>
 
-#include <cstdio>
 #include <fstream>
 #include <sstream>
+#include <utility>
 
 namespace updater {
 namespace {
@@ -17,7 +19,7 @@ const char* kindToText(const FileOp::Kind kind) {
     case FileOp::Kind::Add: return "add";
     case FileOp::Kind::Remove: return "remove";
     }
-    return "add";
+    std::unreachable();
 }
 
 std::optional<FileOp::Kind> kindFromText(const std::string& text) {
@@ -39,17 +41,17 @@ std::filesystem::path Journal::pathIn(const std::filesystem::path& installDir) {
     return installDir / L".update" / L"journal.json";
 }
 
-std::optional<Journal> Journal::load(const std::filesystem::path& installDir) {
+std::expected<std::optional<Journal>, std::string> Journal::load(
+    const std::filesystem::path& installDir) {
     std::ifstream file{pathIn(installDir), std::ios::binary};
     if (!file) {
-        return std::nullopt;
+        return std::optional<Journal>{};  // no journal on disk
     }
     std::ostringstream buffer;
     buffer << file.rdbuf();
 
-    json document;
     try {
-        document = json::parse(buffer.str());
+        const json document = json::parse(buffer.str());
         Journal journal;
         journal.state = document.at("state").get<std::string>();
         journal.version = document.at("version").get<std::string>();
@@ -57,7 +59,8 @@ std::optional<Journal> Journal::load(const std::filesystem::path& installDir) {
         for (const auto& entry : document.at("ops")) {
             const auto kind = kindFromText(entry.at("op").get<std::string>());
             if (!kind) {
-                return std::nullopt;
+                return std::unexpected("journal has unknown op kind: " +
+                                       entry.at("op").get<std::string>());
             }
             journal.ops.push_back(FileOp{
                 .kind = *kind,
@@ -66,57 +69,57 @@ std::optional<Journal> Journal::load(const std::filesystem::path& installDir) {
             });
         }
         if (journal.state != "staged" && journal.state != "swapping") {
-            return std::nullopt;
+            return std::unexpected("journal has unknown state: " + journal.state);
         }
-        return journal;
-    } catch (const json::exception&) {
-        // Corrupt journal: treat as absent; repair will fall back to cleanup.
-        return std::nullopt;
+        return std::optional<Journal>{std::move(journal)};
+    } catch (const json::exception& exception) {
+        return std::unexpected(std::string("journal unparseable: ") + exception.what());
     }
 }
 
 std::expected<void, std::string> Journal::save(const std::filesystem::path& installDir) const {
-    json ops_json = json::array();
+    json opsJson = json::array();
     for (const auto& op : ops) {
-        ops_json.push_back({{"op", kindToText(op.kind)}, {"path", op.path}, {"sha256", op.sha256}});
+        opsJson.push_back({{"op", kindToText(op.kind)}, {"path", op.path}, {"sha256", op.sha256}});
     }
     const json document{
         {"state", state},
         {"version", version},
         {"relaunch_exe", relaunchExe},
-        {"ops", std::move(ops_json)},
+        {"ops", std::move(opsJson)},
     };
 
     const auto target = pathIn(installDir);
     std::error_code ec;
     std::filesystem::create_directories(target.parent_path(), ec);
-    const auto temp = target.wstring() + L".tmp";
+    if (ec) {
+        return std::unexpected("cannot create journal directory: " + ec.message());
+    }
+    const auto temp = std::filesystem::path{target.wstring() + L".tmp"};
     {
-        std::ofstream file{std::filesystem::path{temp}, std::ios::binary | std::ios::trunc};
+        std::ofstream file{temp, std::ios::binary | std::ios::trunc};
         if (!file) {
             return std::unexpected("cannot write journal temp file");
         }
         const auto text = document.dump(2);
         file.write(text.data(), static_cast<std::streamsize>(text.size()));
+        file.close();
         if (!file.good()) {
             return std::unexpected("journal write failed");
         }
     }
-    std::filesystem::rename(temp, target, ec);
-    if (ec) {
-        // rename() cannot replace on Windows when the target exists; remove and retry.
-        std::filesystem::remove(target, ec);
-        std::filesystem::rename(temp, target, ec);
-        if (ec) {
-            return std::unexpected("journal rename failed: " + ec.message());
-        }
+    // Atomic replace: at no point is there a populated .update tree without a
+    // journal (a crash there would make repair mistake it for leftovers).
+    if (const auto replaced = fsops::retryReplaceFile(temp, target); !replaced) {
+        return std::unexpected("journal rename failed: " + replaced.error());
     }
     return {};
 }
 
-void Journal::remove(const std::filesystem::path& installDir) {
+bool Journal::remove(const std::filesystem::path& installDir) {
     std::error_code ec;
     std::filesystem::remove(pathIn(installDir), ec);
+    return !std::filesystem::exists(pathIn(installDir), ec);
 }
 
-}
+}  // namespace updater

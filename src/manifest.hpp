@@ -32,7 +32,7 @@ struct Manifest {
     std::string notes;
     std::vector<ManifestFile> files;
 
-    static std::expected<Manifest, std::string> parse(const std::string& bytes);
+    [[nodiscard]] static std::expected<Manifest, std::string> parse(const std::string& bytes);
 };
 
 /// One planned filesystem operation of an update.
@@ -52,4 +52,4 @@ struct FileOp {
 /// in `newManifest` becomes Add.
 [[nodiscard]] std::vector<FileOp> fullInstallOps(const Manifest& newManifest);
 
-}
+}  // namespace updater

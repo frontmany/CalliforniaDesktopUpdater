@@ -20,9 +20,13 @@ struct Args {
     std::uint32_t parentPid{0};
     std::string relaunchExe{"Calls.exe"};
     bool noRelaunch{false};
-    std::filesystem::path logFile;  // empty: default %LOCALAPPDATA%\Calls\logs\updater.log
+    std::filesystem::path logFile;   // empty: default %LOCALAPPDATA%\Calls\logs\updater.log
+    std::filesystem::path stateDir;  // empty: default %LOCALAPPDATA%\Calls\updates.
+                                     // Not a CLI flag — tests inject a temp dir here so
+                                     // they never touch the real last-apply.json.
 
-    static std::expected<Args, std::string> parse(const std::vector<std::wstring>& argv);
+    [[nodiscard]] static std::expected<Args, std::string> parse(
+        const std::vector<std::wstring>& argv);
 };
 
-}
+}  // namespace updater

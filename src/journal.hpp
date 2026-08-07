@@ -22,13 +22,19 @@ struct Journal {
     std::vector<FileOp> ops;
 
     [[nodiscard]] static std::filesystem::path pathIn(const std::filesystem::path& installDir);
-    [[nodiscard]] static std::optional<Journal> load(const std::filesystem::path& installDir);
 
-    /// Atomic write (temp + rename over).
+    /// nullopt: no journal on disk. unexpected: a journal exists but cannot be
+    /// parsed — callers must NOT treat that as "nothing was mid-swap", the
+    /// .update tree may hold the only copies of displaced files.
+    [[nodiscard]] static std::expected<std::optional<Journal>, std::string> load(
+        const std::filesystem::path& installDir);
+
+    /// Atomic write (temp + MOVEFILE_REPLACE_EXISTING over the target).
     [[nodiscard]] std::expected<void, std::string> save(
         const std::filesystem::path& installDir) const;
 
-    static void remove(const std::filesystem::path& installDir);
+    /// True when the journal file is gone afterwards.
+    static bool remove(const std::filesystem::path& installDir);
 };
 
-}
+}  // namespace updater

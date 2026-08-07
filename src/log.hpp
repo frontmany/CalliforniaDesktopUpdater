@@ -28,4 +28,4 @@ void error(std::format_string<Args...> fmt, Args&&... args) {
     write("ERROR", std::format(fmt, std::forward<Args>(args)...));
 }
 
-}
+}  // namespace updater::log

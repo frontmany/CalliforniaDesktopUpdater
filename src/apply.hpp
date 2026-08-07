@@ -18,7 +18,7 @@ enum ExitCode : int {
 
 /// apply: wait for the app to exit, verify staging, stage locally, swap,
 /// commit, relaunch. repair: roll an interrupted apply forward (or clean up).
-int runApply(const Args& args);
-int runRepair(const Args& args);
+[[nodiscard]] int runApply(const Args& args);
+[[nodiscard]] int runRepair(const Args& args);
 
-}
+}  // namespace updater
