@@ -1,6 +1,6 @@
-# CallsUpdaterApp
+# CalliforniaUpdaterApp
 
-Апдейтер десктоп-клиента Calls: маленький нативный exe, который применяет
+Апдейтер десктоп-клиента Callifornia: маленький нативный exe, который применяет
 скачанное клиентом обновление — дожидается выхода приложения, атомарно
 подменяет файлы и перезапускает клиент.
 
@@ -12,7 +12,7 @@
   (только verify), JSON — вендоренный nlohmann single-header.
 - **Подписанные манифесты**: перед любыми действиями проверяется Ed25519-подпись
   `manifest.json` вшитым публичным ключом (`src/public_key.hpp`, генерируется
-  скриптом `CallsApp/scripts/generate-update-keys.ps1`).
+  скриптом `CalliforniaApp/ci/release/generate-update-keys.mjs`).
 - **Атомарный swap с журналом**: staged-файлы копируются в
   `<install>\.update\incoming\` (после этого swap — только same-volume rename,
   атомарно на NTFS); журнал `.update\journal.json` + RunOnce-страховка
@@ -20,28 +20,28 @@
 - **Откат**: если swap упал (залоченный файл и т.п.) — восстановление из
   `.update\backup\` и перезапуск старой версии.
 - WIN32-subsystem (никаких мелькающих консолей); лог в
-  `%LOCALAPPDATA%\Calls\logs\updater.log`; результат — в
-  `%LOCALAPPDATA%\Calls\updates\last-apply.json`.
+  `%LOCALAPPDATA%\Callifornia\logs\updater.log`; результат — в
+  `%LOCALAPPDATA%\Callifornia\updates\last-apply.json`.
 
 ## CLI
 
 ```
 updater.exe apply  --install-dir <dir> --staging-dir <dir> --parent-pid <pid>
-                   --relaunch-exe Calls.exe [--no-relaunch] [--log <file>]
-updater.exe repair --install-dir <dir> [--relaunch-exe Calls.exe] [--log <file>]
+                   --relaunch-exe Callifornia.exe [--no-relaunch] [--log <file>]
+updater.exe repair --install-dir <dir> [--relaunch-exe Callifornia.exe] [--log <file>]
 ```
 
 Клиент перед запуском копирует `updater.exe` из install-папки в
-`%LOCALAPPDATA%\Calls\updates\bin\` (нельзя запускать из папки, которую
+`%LOCALAPPDATA%\Callifornia\updates\bin\` (нельзя запускать из папки, которую
 предстоит обновлять) и штатно завершается; апдейтер ждёт выхода по PID и
-эксклюзивной пробе `Calls.exe`.
+эксклюзивной пробе `Callifornia.exe`.
 
 Exit-коды: `0` применено; `2` аргументы/уже работает другой апдейтер; `3`
 приложение не вышло; `4` подпись/хэш не сошлись; `5` нет прав записи; `6` swap
 упал, откат успешен; `7` swap и откат упали (журнал оставлен — поможет
 `repair`); `8` repair: делать нечего.
 
-Пока апдейтер работает, он держит named mutex `Local\CallsUpdaterApplying` —
+Пока апдейтер работает, он держит named mutex `Local\CalliforniaUpdaterApplying` —
 клиент проверяет его при старте и молча выходит, если идёт обновление.
 
 ## Сборка и тесты
@@ -54,15 +54,15 @@ powershell -File scripts\integration-test.ps1
 ```
 
 Интеграционному тесту нужен dev-ключ подписи
-(`CallsBackend/Updates/keys/manifest-private.pem`), соответствующий вшитому
+(`CalliforniaBackend/Updates/keys/manifest-private.pem`), соответствующий вшитому
 публичному ключу.
 
 ## Связанные части системы
 
-- **CallsApp** — качает обновления (per-file diff по манифесту) в
-  `%LOCALAPPDATA%\Calls\updates\staging\<version>\` и запускает апдейтер.
-- **CallsBackend/Updates** — сервис, отдающий манифесты; блобы файлов клиент
+- **CalliforniaApp** — качает обновления (per-file diff по манифесту) в
+  `%LOCALAPPDATA%\Callifornia\updates\staging\<version>\` и запускает апдейтер.
+- **CalliforniaBackend/Updates** — сервис, отдающий манифесты; блобы файлов клиент
   качает с `/v1/updates/files/<sha256>` (MinIO через Nginx).
-- **CallsApp/ci/release/publish-release.mjs** — публикация релиза (подпись
+- **CalliforniaApp/ci/release/publish-release.mjs** — публикация релиза (подпись
   манифеста, залив блобов); `updater.exe` входит в состав каждого релиза.
-  Полный процесс выкатки — [CallsApp/RELEASING.md](https://github.com/frontmany/CallsApp/blob/main/RELEASING.md).
+  Полный процесс выкатки — [CalliforniaApp/RELEASING.md](https://github.com/frontmany/CalliforniaApp/blob/main/RELEASING.md).

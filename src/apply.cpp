@@ -29,9 +29,9 @@ namespace {
 // Same-session named mutex; the client checks it at startup and exits while
 // an apply is in flight. (Local\ rather than Global\ -- both processes run in
 // the interactive session and Local\ needs no special privileges.)
-constexpr wchar_t kApplyMutexName[] = L"Local\\CallsUpdaterApplying";
+constexpr wchar_t kApplyMutexName[] = L"Local\\CalliforniaUpdaterApplying";
 constexpr wchar_t kRunOnceKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce";
-constexpr wchar_t kRunOnceValue[] = L"CallsUpdaterRepair";
+constexpr wchar_t kRunOnceValue[] = L"CalliforniaUpdaterRepair";
 
 /// Owns the single-instance apply mutex for the duration of a run.
 class ApplyMutex {

@@ -1,10 +1,10 @@
 # Updater/deps
 
-Клонируйте зависимости в эту папку **локально** после clone (как `Client/deps`,
-`Auth/deps`). В git лежат только `.gitkeep` и этот README.
+Клонируйте зависимости в эту папку **локально** после clone (как
+`CalliforniaApp/deps`, `Auth/deps`). В git лежат только `.gitkeep` и этот README.
 
 Обе — header/source-only, достаточно клонировать, сборка не нужна. Версии
-**запинены** (совпадают с CI-workflow в CallsKit):
+**запинены** (совпадают с CI-workflow `CalliforniaApp/.github/workflows/release.yml`):
 
 ```bash
 git clone https://github.com/orlp/ed25519.git deps/ed25519

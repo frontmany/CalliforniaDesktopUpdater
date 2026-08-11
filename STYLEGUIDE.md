@@ -1,6 +1,6 @@
 # Style guide
 
-Canonical coding conventions for this repository. Adapted from the CallsApp
+Canonical coding conventions for this repository. Adapted from the CalliforniaApp
 client's `STYLEGUIDE.md` for a standalone, Qt-free native tool — the QML and
 Qt-ownership sections there don't apply here.
 

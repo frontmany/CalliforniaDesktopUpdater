@@ -17,11 +17,11 @@ std::filesystem::path localAppDataBase() {
 }
 
 std::filesystem::path defaultStateDir() {
-    return localAppDataBase() / L"Calls" / L"updates";
+    return localAppDataBase() / L"Callifornia" / L"updates";
 }
 
 std::filesystem::path defaultLogFile() {
-    return localAppDataBase() / L"Calls" / L"logs" / L"updater.log";
+    return localAppDataBase() / L"Callifornia" / L"logs" / L"updater.log";
 }
 
 }  // namespace updater
