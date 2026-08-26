@@ -4,7 +4,7 @@ out/
 cmake-build-*/
 CMakeUserPresets.json
 
-# Зависимости: клонируются локально после clone (см. deps/README.md).
+# Dependencies: cloned locally after a clone (see deps/README.md).
 deps/*
 !deps/.gitkeep
 !deps/README.md
