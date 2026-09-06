@@ -49,7 +49,14 @@ std::expected<std::optional<Journal>, std::string> Journal::load(
     // sends repair down the cleanup path -- which deletes .update\backup, the
     // only copy of the files a half-finished swap displaced.
     std::error_code ec;
-    if (!std::filesystem::exists(pathIn(installDir), ec)) {
+    const bool present = std::filesystem::exists(pathIn(installDir), ec);
+    if (ec) {
+        // exists() answers false when it cannot tell, so taking its word here
+        // would fold "cannot tell" back into "nothing was mid-swap" -- the very
+        // conflation this function was changed to end, one line further down.
+        return std::unexpected("cannot tell whether a journal exists: " + ec.message());
+    }
+    if (!present) {
         return std::optional<Journal>{};  // no journal on disk
     }
     std::ifstream file{pathIn(installDir), std::ios::binary};

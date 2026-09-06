@@ -54,6 +54,16 @@ constexpr auto kSwapUnlockGrace = std::chrono::seconds{30};
 /// checks this mutex at startup and exits without a word while it is held.
 std::atomic<HANDLE> gApplyMutex{nullptr};
 
+/// Both calls matter, and only one of them works from every thread.
+///
+/// ReleaseMutex succeeds for the thread that took ownership and fails with
+/// ERROR_NOT_OWNER anywhere else, so the watchdog thread cannot release what
+/// the main thread acquired. CloseHandle can, and it is the one that counts:
+/// what the client tests at startup is whether the NAMED OBJECT exists
+/// (isUpdaterApplying opens it by name), and the object dies with its last
+/// handle. So the close is what lets the app start again, and the release is
+/// only there to be correct on the ordinary path. Neither is checked, because
+/// there is no recovery from either failing and the process is on its way out.
 void releaseApplyMutex() {
     if (HANDLE handle = gApplyMutex.exchange(nullptr); handle != nullptr) {
         ReleaseMutex(handle);
@@ -359,12 +369,36 @@ void discardUpdateState(const std::filesystem::path& installDir) {
 /// continued, committed, and deleted .update\backup -- the last copy of the
 /// version that worked -- leaving an install with no application in it and a
 /// report saying the update succeeded.
+///
+/// Existence alone is not enough to call it done, and the same threat makes the
+/// difference matter. On a Replace the old file only moves aside inside the
+/// branch that has an incoming file to put in its place, so an incoming that
+/// was deleted between staging and the swap leaves the ORIGINAL sitting at the
+/// target. Answering "already done" there reports a stale binary as the new
+/// one, and commit then destroys the backup insuring against exactly that. The
+/// hash is what separates the two cases, and it is only ever paid on this path,
+/// which is the rare one.
 [[nodiscard]] std::expected<void, std::string> landed(const std::filesystem::path& target,
                                                       const FileOp& op) {
-    if (std::filesystem::exists(target)) {
-        return {};  // both steps already done
+    if (!std::filesystem::exists(target)) {
+        return std::unexpected(op.path + " is missing from both the update and the install");
     }
-    return std::unexpected(op.path + " is missing from both the update and the install");
+    if (op.sha256.empty()) {
+        // Nothing to compare against. Manifest ops always carry one, so this is
+        // only reachable for an op that never had a target hash, and inventing
+        // a failure out of its absence would refuse an update over bookkeeping.
+        return {};
+    }
+    const auto installed = sha256File(target);
+    if (!installed) {
+        return std::unexpected(op.path + " is in the install but cannot be read back: " +
+                               installed.error());
+    }
+    if (*installed != op.sha256) {
+        return std::unexpected(op.path +
+                               " never arrived: the file in the install is the previous one");
+    }
+    return {};  // both steps already done
 }
 
 /// The first file an op promised to leave in the install and did not. Empty
@@ -986,12 +1020,31 @@ int runRepair(const Args& args) {
     // running because a swap was already interrupted once, and starting a
     // second one into a file somebody has open is how a half-finished update
     // becomes an unfinished one. The journal keeps; the next start tries again.
+    //
+    // Refusing is not the same as vanishing, though, and this path used to do
+    // both. Repair is launched by a client that then exits, so returning here
+    // without starting anything left the machine with no application and
+    // nothing written down -- and since the journal stays, the next launch
+    // handed over to repair again and got the same silence. That is the icon
+    // that does nothing when clicked, rebuilt out of the probe that
+    // waitForSwapTargetsUnlocked warns is advisory: isFileLocked opens with no
+    // sharing at all, so an indexer reading one file out of a thousand is
+    // enough to trigger it.
     for (const auto& op : journal.ops) {
-        if (fsops::isFileLocked(args.installDir / relative(op.path))) {
-            log::error("repair: {} still locked; leaving the journal for the next attempt",
-                       op.path);
-            return finish(kParentAlive);
+        const auto target = args.installDir / relative(op.path);
+        if (!fsops::isFileLocked(target)) {
+            continue;
         }
+        log::error("repair: {} still locked; leaving the journal for the next attempt", op.path);
+        const auto owners = lockOwners({target});
+        if (!owners.empty()) {
+            log::error("{} is held by {}", op.path, owners);
+        }
+        writeLastApply(stateDir, "error", journal.version,
+                       "the update could not be finished because " + op.path +
+                           " is still in use" + (owners.empty() ? "" : " by " + owners));
+        startApp(journal.relaunchExe);
+        return finish(kParentAlive);
     }
     watchdog::setPhase(watchdog::Phase::Swap);
     for (const auto& op : journal.ops) {

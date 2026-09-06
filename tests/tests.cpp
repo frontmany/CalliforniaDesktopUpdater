@@ -387,12 +387,17 @@ void testRepairHalfSwapped() {
     writeFile(install / "old.dll", "old");
     writeFile(install / ".update" / "manifest.json", "m2");
 
+    // Real target hashes, as a journal always carries them: rolling an op
+    // forward when its incoming file is already gone has to tell "the swap
+    // finished" apart from "the new file never arrived and the old one is
+    // still sitting there", and only the hash says which.
     updater::Journal journal{
         .state = "swapping",
         .version = "2.0.0",
         .relaunchExe = "Callifornia.exe",
-        .ops = {{updater::FileOp::Kind::Replace, "Callifornia.exe", ""},
-                {updater::FileOp::Kind::Add, "fresh.dll", ""},
+        .ops = {{updater::FileOp::Kind::Replace, "Callifornia.exe",
+                 *updater::sha256Bytes("new-exe")},
+                {updater::FileOp::Kind::Add, "fresh.dll", *updater::sha256Bytes("fresh")},
                 {updater::FileOp::Kind::Remove, "old.dll", ""}},
     };
     CHECK(journal.save(install).has_value());
@@ -402,6 +407,32 @@ void testRepairHalfSwapped() {
     CHECK(readFile(install / "Callifornia.exe") == "new-exe");
     CHECK(readFile(install / "fresh.dll") == "fresh");
     CHECK(!fs::exists(install / "old.dll"));
+    CHECK(!fs::exists(install / ".update"));
+}
+
+// The case the hash is there for. The incoming file is gone -- an antivirus
+// took it between staging and the swap -- and the original is still at the
+// target. Existence alone reads that as "already done", and commit then
+// destroys the backup that was the last copy of a working install.
+void testRepairRefusesAStaleTargetWhenTheIncomingVanished() {
+    const auto install = freshDir("repair-stale");
+    writeFile(install / "Callifornia.exe", "old-exe");  // never replaced
+    writeFile(install / ".update" / "backup" / "Callifornia.exe", "old-exe");
+    writeFile(install / ".update" / "manifest.json", "m2");
+
+    updater::Journal journal{
+        .state = "swapping",
+        .version = "2.0.0",
+        .relaunchExe = "Callifornia.exe",
+        .ops = {{updater::FileOp::Kind::Replace, "Callifornia.exe",
+                 *updater::sha256Bytes("new-exe")}},
+    };
+    CHECK(journal.save(install).has_value());
+
+    CHECK(updater::runRepair(repairArgs(install, "repair-stale")) == updater::kSwapFailedRolledBack);
+    // The working version is back and the update state is gone, rather than a
+    // success reported over a binary that was never replaced.
+    CHECK(readFile(install / "Callifornia.exe") == "old-exe");
     CHECK(!fs::exists(install / ".update"));
 }
 
@@ -568,6 +599,7 @@ int main(const int argc, char** argv) {
     testWatchdogKillsAStuckRun();
     testRepairRollForward();
     testRepairHalfSwapped();
+    testRepairRefusesAStaleTargetWhenTheIncomingVanished();
     testRepairStagedDiscards();
     testRepairRollsBackWhenRollForwardFails();
     testRepairAFileRemovedFromUnderItIsNotSuccess();

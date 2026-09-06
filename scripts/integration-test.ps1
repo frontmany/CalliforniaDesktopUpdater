@@ -201,7 +201,25 @@ $holder = Start-Process -FilePath "powershell.exe" -PassThru -WindowStyle Hidden
     "-NoProfile", "-Command",
     "`$h=[System.IO.File]::Open('$target',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::None);" +
     "Start-Sleep -Seconds $holdSeconds; `$h.Close()")
-Start-Sleep -Milliseconds 800  # let the handle actually be open before we start
+# Wait for the handle to actually exist rather than guessing at how long
+# powershell.exe takes to start. A fixed sleep was enough on a warm machine and
+# not on a cold one, and when it was not, the updater found nothing locked, took
+# the ordinary path, and the run failed on the two log assertions at the end --
+# a flake that reads exactly like the grace being broken.
+$lockedByHolder = $false
+$waitUntil = (Get-Date).AddSeconds(15)
+while ((Get-Date) -lt $waitUntil) {
+    try {
+        $probe = [System.IO.File]::Open($target, [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $probe.Close()
+    } catch {
+        $lockedByHolder = $true
+        break
+    }
+    Start-Sleep -Milliseconds 100
+}
+Assert $lockedByHolder "the holder actually opened locked.dll before apply started"
 
 $parent = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "exit" -PassThru -WindowStyle Hidden
 $lockLog = Join-Path $lockWork "updater.log"

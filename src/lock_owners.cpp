@@ -4,6 +4,7 @@
 #include <restartmanager.h>
 
 #include <array>
+#include <cwchar>
 #include <string>
 #include <vector>
 
@@ -18,12 +19,22 @@ std::string narrow(const wchar_t* wide) {
     if (wide == nullptr || wide[0] == L'\0') {
         return {};
     }
-    const int size = WideCharToMultiByte(CP_UTF8, 0, wide, -1, nullptr, 0, nullptr, nullptr);
-    if (size <= 1) {
+    // Measured and written over the characters only, not the terminator. Asking
+    // with -1 counts the null into the required size, and passing that size
+    // minus one back as the buffer is then one byte short: the call fails with
+    // ERROR_INSUFFICIENT_BUFFER, writes nothing it promises to keep, and the
+    // name comes back empty -- which lockOwners then skips, leaving the log
+    // line saying a file is held by nobody. std::string carries its own length,
+    // so the terminator was never wanted here.
+    const auto length = static_cast<int>(std::wcslen(wide));
+    const int size = WideCharToMultiByte(CP_UTF8, 0, wide, length, nullptr, 0, nullptr, nullptr);
+    if (size <= 0) {
         return {};
     }
-    std::string out(static_cast<std::size_t>(size - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, wide, -1, out.data(), size - 1, nullptr, nullptr);
+    std::string out(static_cast<std::size_t>(size), '\0');
+    if (WideCharToMultiByte(CP_UTF8, 0, wide, length, out.data(), size, nullptr, nullptr) <= 0) {
+        return {};
+    }
     return out;
 }
 
