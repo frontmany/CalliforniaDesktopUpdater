@@ -1,6 +1,7 @@
 #include "fsops.hpp"
 
 #include "sha256.hpp"
+#include "watchdog.hpp"
 #include "win_raii.hpp"
 
 #include <windows.h>
@@ -17,9 +18,22 @@ constexpr int kAttempts = 10;
 
 /// 250 ms -> 2 s exponential backoff; ~14 s worst case per operation
 /// (no sleep after the final failed attempt).
+///
+/// Bounded per operation was never the same as bounded per run: a full
+/// reinstall is over a thousand operations, and a machine that makes every one
+/// of them retry turns "fourteen seconds" into most of a day with the app shut
+/// down and nothing on screen. The sleep is capped by what is left of the run's
+/// work budget, and once that is gone retrying stops altogether -- see
+/// budgetExhausted().
 void backoff(const int attempt) {
-    const auto delay = std::min(250 * (1 << attempt), 2000);
-    std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+    const auto delay = std::chrono::milliseconds{std::min(250 * (1 << attempt), 2000)};
+    std::this_thread::sleep_for(std::min(delay, watchdog::workBudget()));
+}
+
+/// No time left for patience. The operation still gets its attempts, back to
+/// back; only the waiting between them is dropped.
+[[nodiscard]] bool budgetExhausted() {
+    return watchdog::workBudget() <= std::chrono::milliseconds{0};
 }
 
 bool isRetryableError(const DWORD error) {
@@ -56,7 +70,7 @@ std::expected<void, std::string> retryMove(const std::filesystem::path& from,
             return {};
         }
         lastError = GetLastError();
-        if (!isRetryableError(lastError) || attempt + 1 == kAttempts) {
+        if (!isRetryableError(lastError) || attempt + 1 == kAttempts || budgetExhausted()) {
             break;
         }
         backoff(attempt);
@@ -86,7 +100,7 @@ std::expected<void, std::string> retryDeleteFile(const std::filesystem::path& fi
         if (lastError == ERROR_FILE_NOT_FOUND || lastError == ERROR_PATH_NOT_FOUND) {
             return {};
         }
-        if (!isRetryableError(lastError) || attempt + 1 == kAttempts) {
+        if (!isRetryableError(lastError) || attempt + 1 == kAttempts || budgetExhausted()) {
             break;
         }
         backoff(attempt);
@@ -115,7 +129,7 @@ std::expected<void, std::string> copyVerified(const std::filesystem::path& from,
             return std::unexpected("copy verification failed for " + to.string());
         }
         lastError = GetLastError();
-        if (!isRetryableError(lastError) || attempt + 1 == kAttempts) {
+        if (!isRetryableError(lastError) || attempt + 1 == kAttempts || budgetExhausted()) {
             break;
         }
         backoff(attempt);

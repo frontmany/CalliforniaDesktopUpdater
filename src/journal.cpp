@@ -43,9 +43,18 @@ std::filesystem::path Journal::pathIn(const std::filesystem::path& installDir) {
 
 std::expected<std::optional<Journal>, std::string> Journal::load(
     const std::filesystem::path& installDir) {
+    // "Absent" and "there but unreadable" are opposite answers and used to
+    // arrive as one: an ifstream that will not open also means locked, denied
+    // or on a disk that is failing, and reading that as "nothing was mid-swap"
+    // sends repair down the cleanup path -- which deletes .update\backup, the
+    // only copy of the files a half-finished swap displaced.
+    std::error_code ec;
+    if (!std::filesystem::exists(pathIn(installDir), ec)) {
+        return std::optional<Journal>{};  // no journal on disk
+    }
     std::ifstream file{pathIn(installDir), std::ios::binary};
     if (!file) {
-        return std::optional<Journal>{};  // no journal on disk
+        return std::unexpected("journal exists but cannot be opened");
     }
     std::ostringstream buffer;
     buffer << file.rdbuf();

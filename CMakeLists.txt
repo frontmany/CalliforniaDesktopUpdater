@@ -46,15 +46,20 @@ add_library(applylib STATIC
     src/args.cpp
     src/fsops.cpp
     src/journal.cpp
+    src/lock_owners.cpp
     src/log.cpp
     src/manifest.cpp
     src/sha256.cpp
     src/verify.cpp
+    src/watchdog.cpp
 )
 target_include_directories(applylib PUBLIC src deps/json/include)
 target_link_libraries(applylib PUBLIC ed25519_verify)
 if(WIN32)
-    target_link_libraries(applylib PUBLIC bcrypt shell32 advapi32)
+    # rstrtmgr: the Restart Manager, used only to name the process holding a
+    # file open when a swap is blocked. A system DLL, never one this binary
+    # could be asked to replace, so the no-runtime-dependencies rule holds.
+    target_link_libraries(applylib PUBLIC bcrypt shell32 advapi32 rstrtmgr)
 endif()
 if(MSVC)
     target_compile_definitions(applylib PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

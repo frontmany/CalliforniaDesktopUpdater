@@ -1,7 +1,14 @@
 # End-to-end test of updater.exe against throwaway directories: builds a fake
-# "installed app", a staged update signed with the dev key, runs apply, and
-# checks the swap + manifest + cleanup. Needs the dev signing key (the same
-# one whose public part is embedded via src/public_key.hpp).
+# "installed app", a staged update signed with the release key, runs apply, and
+# checks the swap + manifest + cleanup.
+#
+# The key has to be the one whose public half is embedded in src/public_key.hpp,
+# because verifying against that constant is half of what is being tested. There
+# is exactly one such key and it lives in the secrets checkout. The default used
+# to point at Updates\keys\manifest-private.pem, which no longer matches the
+# embedded constant, so every run stopped at the first apply with exit 4 and a
+# log line about a bad signature -- indistinguishable from the updater actually
+# being broken.
 #
 # Usage:
 #   .\scripts\integration-test.ps1
@@ -10,7 +17,7 @@
 [CmdletBinding()]
 param(
     [string]$UpdaterExe = "",
-    [string]$PrivateKeyFile = "C:\projects\CalliforniaBackend\Updates\keys\manifest-private.pem"
+    [string]$PrivateKeyFile = "C:\projects\.callifornia-secrets\updates-manifest-private.pem"
 )
 
 $ErrorActionPreference = "Stop"
@@ -155,6 +162,61 @@ $run = Start-Process -FilePath $UpdaterExe -ArgumentList @(
     "--parent-pid", $parent.Id, "--relaunch-exe", "Callifornia.exe", "--no-relaunch",
     "--log", "`"$(Join-Path $work 'updater.log')`"") -Wait -PassThru
 Assert ($run.ExitCode -eq 4) "bad signature rejected (exit 4)"
+
+# --- A swap target somebody else still has open -----------------------------
+# The failure this whole grace exists for. An update that skips a release drops
+# files the app had mapped a moment earlier -- the media stack, the D3D
+# compiler -- and a scanner re-reads exactly those the instant the process
+# holding them dies. Only the relaunch executable ever got waited for, so one
+# straggling handle on any of the others failed the update, identically on
+# every retry. Here the handle is held for longer than the rename backoff alone
+# would have survived and released while the grace is still running.
+$lockWork = Join-Path $env:TEMP "updater-integration-lock"
+if (Test-Path $lockWork) { Remove-Item $lockWork -Recurse -Force }
+$lockInstall = Join-Path $lockWork "install"
+$lockStaging = Join-Path $lockWork "staging"
+New-Item -ItemType Directory -Force $lockInstall, $lockStaging | Out-Null
+
+Copy-Item $UpdaterExe (Join-Path $lockInstall "Callifornia.exe")
+Copy-Item $UpdaterExe (Join-Path $lockInstall "updater.exe")
+Write-Bytes (Join-Path $lockInstall "locked.dll") "held-open"
+Write-Bytes (Join-Path $lockInstall "manifest.json") `
+    (New-Manifest "0.1.0" $lockInstall @("Callifornia.exe", "updater.exe", "locked.dll"))
+# The new release drops locked.dll and changes nothing else: one Remove op, so
+# the run reaches the swap with nothing else able to fail first.
+$lockManifest = New-Manifest "0.2.0" $lockInstall @("Callifornia.exe", "updater.exe")
+$lockManifestPath = Join-Path $lockStaging "manifest.json"
+Write-Bytes $lockManifestPath $lockManifest
+& $openssl pkeyutl -sign -rawin -inkey $PrivateKeyFile -in $lockManifestPath -out $sigBin
+if ($LASTEXITCODE -ne 0) { throw "signing failed" }
+[System.IO.File]::WriteAllText((Join-Path $lockStaging "manifest.sig"),
+    [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($sigBin)),
+    [System.Text.UTF8Encoding]::new($false))
+
+# 18 seconds: past the ~14 s of rename backoff that used to be the only
+# patience in the apply path, and inside the 30 s grace.
+$holdSeconds = 18
+$target = Join-Path $lockInstall "locked.dll"
+$holder = Start-Process -FilePath "powershell.exe" -PassThru -WindowStyle Hidden -ArgumentList @(
+    "-NoProfile", "-Command",
+    "`$h=[System.IO.File]::Open('$target',[System.IO.FileMode]::Open,[System.IO.FileAccess]::Read,[System.IO.FileShare]::None);" +
+    "Start-Sleep -Seconds $holdSeconds; `$h.Close()")
+Start-Sleep -Milliseconds 800  # let the handle actually be open before we start
+
+$parent = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "exit" -PassThru -WindowStyle Hidden
+$lockLog = Join-Path $lockWork "updater.log"
+$run = Start-Process -FilePath $UpdaterExe -ArgumentList @(
+    "apply", "--install-dir", "`"$lockInstall`"", "--staging-dir", "`"$lockStaging`"",
+    "--parent-pid", $parent.Id, "--relaunch-exe", "Callifornia.exe", "--no-relaunch",
+    "--log", "`"$lockLog`"") -Wait -PassThru
+$holder | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
+
+Assert ($run.ExitCode -eq 0) "a swap target held open is waited for, not failed"
+Assert (-not (Test-Path $target)) "locked.dll removed once its holder let go"
+Assert (-not (Test-Path (Join-Path $lockInstall ".update"))) ".update cleaned after the wait"
+$lockLogText = if (Test-Path $lockLog) { Get-Content $lockLog -Raw } else { "" }
+Assert ($lockLogText -match "swap targets still open") "the wait is recorded in the log"
+Assert ($lockLogText -match "all swap targets released") "and so is the release"
 
 if ($failures -eq 0) {
     Write-Host "`nintegration test passed" -ForegroundColor Green

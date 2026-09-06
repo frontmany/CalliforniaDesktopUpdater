@@ -9,14 +9,21 @@
 #include "manifest.hpp"
 #include "sha256.hpp"
 #include "verify.hpp"
+#include "watchdog.hpp"
+#include "win_raii.hpp"
 
 #include <windows.h>
 
+#include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -209,6 +216,129 @@ void testJournalRoundTrip() {
     const auto corruptDir = freshDir("journal-corrupt");
     writeFile(corruptDir / ".update" / "journal.json", "{not json");
     CHECK(!updater::Journal::load(corruptDir).has_value());
+
+    // Present but unopenable (locked, denied, failing disk) is the same answer
+    // as corrupt and the opposite of absent: reading it as "no journal" sends
+    // repair into the cleanup branch, which deletes .update\backup — sometimes
+    // the only copy of the files a half-finished swap displaced.
+    const auto lockedDir = freshDir("journal-locked");
+    const auto lockedJournal = lockedDir / ".update" / "journal.json";
+    writeFile(lockedJournal, "{}");
+    const updater::UniqueHandle exclusive{CreateFileW(lockedJournal.c_str(), GENERIC_READ,
+                                                      0 /* no sharing */, nullptr, OPEN_EXISTING,
+                                                      FILE_ATTRIBUTE_NORMAL, nullptr)};
+    CHECK(exclusive.valid());
+    if (exclusive.valid()) {
+        CHECK(!updater::Journal::load(lockedDir).has_value());
+    }
+}
+
+void testPruneSatisfiedOps() {
+    // The client stages only what its own diff needed; a plan built here from
+    // an unreadable local manifest asks for the whole release. Ops the install
+    // already satisfies must drop out instead of failing the apply forever.
+    const auto root = freshDir("prune");
+    const auto staging = root / "staging";
+    const auto install = root / "install";
+    writeFile(install / "unchanged.dll", "same");
+    writeFile(install / "stale.dll", "old");
+    writeFile(staging / "changed.dll", "new");
+
+    const auto sameHash = updater::sha256Bytes("same");
+    CHECK(sameHash.has_value());
+    std::vector<updater::FileOp> ops{
+        // Staged: kept whatever its hash.
+        {updater::FileOp::Kind::Replace, "changed.dll", kZeroHash},
+        // Not staged, but the installed file is already what the manifest wants.
+        {updater::FileOp::Kind::Add, "unchanged.dll", sameHash.value_or("")},
+        // Not staged and the installed file is something else: a real gap.
+        {updater::FileOp::Kind::Replace, "stale.dll", kZeroHash},
+        // Removals never need a staged file.
+        {updater::FileOp::Kind::Remove, "gone.dll", ""},
+    };
+
+    CHECK(updater::pruneSatisfiedOps(ops, staging, install) == 1);
+    CHECK(ops.size() == 3);
+    CHECK(std::ranges::none_of(ops, [](const updater::FileOp& op) {
+        return op.path == "unchanged.dll";
+    }));
+    // Nothing was dropped that would have hidden a genuine hole.
+    CHECK(std::ranges::any_of(ops, [](const updater::FileOp& op) {
+        return op.path == "stale.dll";
+    }));
+}
+
+void testWatchdogBudget() {
+    using namespace std::chrono;
+    // Unarmed: no ceiling, so nothing in fsops shortens its retries.
+    CHECK(!updater::watchdog::expired());
+    CHECK(updater::watchdog::workBudget() > hours{1});
+
+    updater::watchdog::arm(minutes{10}, [] {});
+    const auto left = updater::watchdog::remaining();
+    CHECK(left <= minutes{10} && left > minutes{9});
+    // The reserve is held back from ordinary work so a swap that runs long
+    // still has room to roll back.
+    CHECK(updater::watchdog::workBudget() < updater::watchdog::remaining());
+    updater::watchdog::releaseReserve();
+    CHECK(updater::watchdog::workBudget() > minutes{9});
+
+    updater::watchdog::disarm();
+    CHECK(!updater::watchdog::expired());
+    CHECK(updater::watchdog::workBudget() > hours{1});
+}
+
+// The whole "it can never hang" claim rests on a code path that ends in
+// TerminateProcess, which is exactly the code an in-process test cannot run
+// without taking the suite down with it. So run it in a process that is meant
+// to die: this binary, re-launched in a mode that arms a two second budget and
+// then deliberately stops making progress. Untested, this was the one part of
+// the guarantee taken on faith -- and a watchdog that does not fire is worse
+// than none, because it is the reason nothing else was bounded.
+void testWatchdogKillsAStuckRun() {
+    using namespace std::chrono;
+    const auto dir = freshDir("watchdog-kill");
+    const auto marker = dir / "expired.txt";
+
+    std::wstring selfPath(32'768, L'\0');
+    const auto length =
+        GetModuleFileNameW(nullptr, selfPath.data(), static_cast<DWORD>(selfPath.size()));
+    CHECK(length > 0 && length < selfPath.size());
+    if (length == 0 || length >= selfPath.size()) {
+        return;
+    }
+    selfPath.resize(length);
+
+    std::wstring command = L"\"" + selfPath + L"\" --watchdog-child \"" + marker.wstring() + L"\"";
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION process{};
+    const bool started = CreateProcessW(selfPath.c_str(), command.data(), nullptr, nullptr, FALSE,
+                                        CREATE_NO_WINDOW, nullptr, nullptr, &startup,
+                                        &process) != 0;
+    CHECK(started);
+    if (!started) {
+        return;
+    }
+    CloseHandle(process.hThread);
+
+    // Generous next to a two second budget: what is being checked is that it
+    // dies at all, not to the millisecond.
+    const bool died = WaitForSingleObject(process.hProcess, 20'000) == WAIT_OBJECT_0;
+    CHECK(died);
+    DWORD code = 0;
+    if (died) {
+        GetExitCodeProcess(process.hProcess, &code);
+    } else {
+        TerminateProcess(process.hProcess, 1);  // do not leave it behind
+    }
+    CloseHandle(process.hProcess);
+
+    CHECK(code == static_cast<DWORD>(updater::kTimedOut));
+    // And it recorded why before going: a process that dies silently tells the
+    // client nothing, which is how the failure that started all this stayed
+    // invisible.
+    CHECK(fs::exists(marker));
 }
 
 // --- Apply state machine (no signature: exercised via repair paths) ---------
@@ -293,6 +423,67 @@ void testRepairStagedDiscards() {
     CHECK(!fs::exists(install / "x.dll"));
 }
 
+void testRepairRollsBackWhenRollForwardFails() {
+    // An op that cannot be completed used to leave the journal in place and
+    // return. The client hands over to repair on every start when a journal is
+    // there and exits, so that state is an install nobody can run and nothing
+    // can fix. Repair now undoes the swap instead, leaving the previous version
+    // whole and startable.
+    const auto install = freshDir("repair-give-up");
+    writeFile(install / "Callifornia.exe", "old-exe");
+    writeFile(install / "sub" / "doomed.dll", "still-here");
+    // A FILE where the backup tree needs a DIRECTORY: the rename cannot even
+    // create its destination, and fails without burning the retry backoff.
+    writeFile(install / ".update" / "backup" / "sub", "in the way");
+
+    updater::Journal journal{
+        .state = "swapping",
+        .version = "2.0.0",
+        .relaunchExe = "Callifornia.exe",
+        .ops = {{updater::FileOp::Kind::Remove, "sub/doomed.dll", ""}},
+    };
+    CHECK(journal.save(install).has_value());
+
+    CHECK(updater::runRepair(repairArgs(install, "repair-give-up")) ==
+          updater::kSwapFailedRolledBack);
+    // Previous version intact, nothing half-removed, and no journal left to
+    // send the next start round the same loop.
+    CHECK(readFile(install / "Callifornia.exe") == "old-exe");
+    CHECK(readFile(install / "sub" / "doomed.dll") == "still-here");
+    CHECK(!fs::exists(install / ".update"));
+}
+
+// A file that is gone from both the update and the install used to read as
+// "already swapped". It is the shape an antivirus leaves behind: the new
+// executable is written, something decides it is malware and deletes it, and
+// the only remaining copy of the old one is in .update\backup -- which commit
+// then deletes too, reporting success. The install ends up with no application
+// in it and nothing able to start and say why.
+void testRepairAFileRemovedFromUnderItIsNotSuccess() {
+    const auto install = freshDir("repair-vanished");
+    writeFile(install / "Callifornia.exe", "old-exe");
+    // Mid-swap: the old app.dll was moved aside, and the new one is gone.
+    writeFile(install / ".update" / "backup" / "app.dll", "old-app");
+    writeFile(install / ".update" / "manifest.json", "m2");
+
+    updater::Journal journal{
+        .state = "swapping",
+        .version = "2.0.0",
+        .relaunchExe = "Callifornia.exe",
+        .ops = {{updater::FileOp::Kind::Replace, "app.dll", ""}},
+    };
+    CHECK(journal.save(install).has_value());
+
+    CHECK(updater::runRepair(repairArgs(install, "repair-vanished")) ==
+          updater::kSwapFailedRolledBack);
+    // The old file is back rather than lost, and the manifest was NOT committed
+    // over an install that does not match it.
+    CHECK(readFile(install / "app.dll") == "old-app");
+    CHECK(readFile(install / "Callifornia.exe") == "old-exe");
+    CHECK(!fs::exists(install / ".update"));
+    CHECK(!fs::exists(install / "manifest.json"));
+}
+
 void testRepairNoJournal() {
     const auto install = freshDir("repair-nothing");
     writeFile(install / "Callifornia.exe", "exe");
@@ -354,15 +545,32 @@ void testArgs() {
 
 }  // namespace
 
-int main() {
+int main(const int argc, char** argv) {
+    // Child mode for testWatchdogKillsAStuckRun. Not a test itself: a process
+    // whose job is to arm the watchdog, stop making progress, and be killed.
+    if (argc >= 3 && std::string_view{argv[1]} == "--watchdog-child") {
+        const std::string markerPath = argv[2];
+        updater::watchdog::arm(std::chrono::seconds{2}, [markerPath]() {
+            std::ofstream out{markerPath, std::ios::binary | std::ios::trunc};
+            out << "expired";
+        });
+        std::this_thread::sleep_for(std::chrono::minutes{5});
+        return 0;  // unreachable: the watchdog gets here first
+    }
+
     testManifestParsing();
     testDiff();
     testBase64();
     testSha256();
     testJournalRoundTrip();
+    testPruneSatisfiedOps();
+    testWatchdogBudget();
+    testWatchdogKillsAStuckRun();
     testRepairRollForward();
     testRepairHalfSwapped();
     testRepairStagedDiscards();
+    testRepairRollsBackWhenRollForwardFails();
+    testRepairAFileRemovedFromUnderItIsNotSuccess();
     testRepairNoJournal();
     testRepairCorruptJournalPreservesBackups();
     testRepairCorruptJournalNoValuablesCleansUp();
