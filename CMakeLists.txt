@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.24)
 
 # Deliberately no VERSION: the updater is not versioned or released on its
 # own. It ships inside the client's release tree and is identified by the
-# client release's version (CalliforniaApp/release.json) via the signed manifest.
+# client release's version (CalliforniaDesktop/release.json) via the signed manifest.
 project(Updater
     LANGUAGES C CXX
     DESCRIPTION "Callifornia client update applier"
